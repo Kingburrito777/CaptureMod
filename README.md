@@ -14,7 +14,7 @@ CaptureMod is a Minecraft mod designed to capture detailed screenshots and 3D bl
 
 Below is an example of a raw screenshot (left) and its corresponding pixel mapping data (right). The pixel mapping includes 3D coordinates and block states for each sampled pixel, enabling advanced analysis and dataset creation.
 
-![Example Screenshot and Pixel Mapping](example_screenshot_mapping.png)
+![Example Screenshot and Pixel Mapping](example_plot.png)
 
 ## Installation
 

@@ -60,7 +60,7 @@ class SchematicCaptureManager {
     private int currentPositionIndex = 0;
     private int tickCounter = 0;
     private boolean isCapturing = false;
-    private static final int DELAY_TICKS = 20; // 1 second delay (10 ticks per set) = 20
+    private static final int DELAY_TICKS = 40; // 20 ticks/sec
     private SchematicPlacement placement;
     private String schematicName;
     private MinecraftClient client;
@@ -68,27 +68,28 @@ class SchematicCaptureManager {
     private World world;
     private boolean isPositionSet = false;
     private List<BlockPos> allBlockPositions = new ArrayList<>();
+    public static final double reachDistance = 250.0;
 
     public void startCapture(MinecraftClient client) {
         this.client = client;
         this.server = client.getServer(); // This is null in multiplayer client-only contexts
         this.world = server.getWorld(client.world.getRegistryKey());
+        setupEnvironment();
 
         // Step 1: Load schematic
         File directory = new File(client.runDirectory, "schematics/");
-        LitematicaSchematic schematic = LitematicaSchematic.createFromFile(directory, "24150.litematic");
+        LitematicaSchematic schematic = LitematicaSchematic.createFromFile(directory, "plane.litematic");
         if (schematic == null) {
             System.err.println("Failed to load schematic.");
             return;
         }
 
         // Step 2: Create and position schematic placement at (0, 0, 0)
-        placement = SchematicPlacement.createFor(schematic, new BlockPos(0, 0, 0), schematic.getMetadata().getName(), false, false);
+        placement = SchematicPlacement.createFor(schematic, new BlockPos(0, 0, 0), schematic.getMetadata().getName(), true, true);
+//        DataManager.getSchematicPlacementManager().addSchematicPlacement(placement, true); // Register with manager
 
         // Step 3: Place schematic in the world
         schematic.placeToWorld(world, placement, false, true);
-
-        setupEnvironment();
 
         // Step 4: Calculate camera positions
         Vec3i dimensions = schematic.getTotalSize();
@@ -123,21 +124,15 @@ class SchematicCaptureManager {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!isCapturing || client == null) return;
 
-            // Increment tick counter
             tickCounter++;
-
-            // Wait until the delay is reached
             if (tickCounter >= DELAY_TICKS) {
                 if (currentPositionIndex < cameraPositions.size()) {
                     CameraPosition pos = cameraPositions.get(currentPositionIndex);
-
                     if (!isPositionSet) {
-                        // First set the position and orientation
                         setCameraPosition(client, pos);
                         isPositionSet = true;
-                        tickCounter = 0; // Wait another delay for position to apply
+                        tickCounter = 0;
                     } else {
-                        // Then capture after position has been set
                         captureFromPosition(client, pos, placement, schematicName, allBlockPositions);
                         currentPositionIndex++;
                         isPositionSet = false;
@@ -146,6 +141,7 @@ class SchematicCaptureManager {
                 } else {
                     isCapturing = false;
                     clearHitResults(allBlockPositions);
+                    DataManager.getSchematicPlacementManager().removeSchematicPlacement(placement); // Clean up
                 }
             }
         });
@@ -184,15 +180,14 @@ class SchematicCaptureManager {
     private void clearSchematicBlocks(World world) {
         if (client.world == null || client.player == null || placement == null) return;
 
-        // Get the schematic’s origin and size
-        BlockPos origin = placement.getOrigin(); // Assuming this returns the placement origin
+        BlockPos origin = placement.getOrigin();
         Vec3i size = placement.getSchematic().getTotalSize();
-        // Iterate over the schematic’s bounding box and set blocks to air
-        for (int x = 0; x < size.getX() + 10; x++) {
-            for (int y = 0; y < size.getY() + 10; y++) {
-                for (int z = 0; z < size.getZ() + 10; z++) {
+        for (int x = 0; x < size.getX(); x++) {
+            for (int y = 0; y < size.getY(); y++) {
+                for (int z = 0; z < size.getZ(); z++) {
                     BlockPos pos = origin.add(x, y, z);
-                    world.setBlockState(pos, Blocks.AIR.getDefaultState(), 3);                }
+                    world.setBlockState(pos, Blocks.AIR.getDefaultState(), 3);
+                }
             }
         }
     }
@@ -252,8 +247,8 @@ class SchematicCaptureManager {
 
         List<CameraPosition> positions = new ArrayList<>();
 
-        // Distance multiplier for padding (adjustable: 1.5x to 2x works well)
-        double distanceMultiplier = 1.5;
+        // Distance multiplier for padding (adjustable)
+        double distanceMultiplier = 0.10;
 
         // Front view (along Z-axis, facing negative Z, Y-X plane)
         double frontBackDistance = Math.max(height, width) * distanceMultiplier;
@@ -486,13 +481,12 @@ class CaptureLogic {
         Entity entity = client.getCameraEntity();
         if (entity == null || client.world == null) return null;
 
-        double reachDistance = 100.0;
-        HitResult target = raycast(entity, reachDistance, tickDelta, true, direction);
+        HitResult target = raycast(entity, SchematicCaptureManager.reachDistance, tickDelta, true, direction);
         Vec3d cameraPos = entity.getCameraPosVec(tickDelta);
 
-        Vec3d vec3d3 = cameraPos.add(direction.multiply(reachDistance));
+        Vec3d vec3d3 = cameraPos.add(direction.multiply(SchematicCaptureManager.reachDistance));
         Box box = entity.getBoundingBox()
-                .stretch(entity.getRotationVec(1.0F).multiply(reachDistance))
+                .stretch(entity.getRotationVec(1.0F).multiply(SchematicCaptureManager.reachDistance))
                 .expand(1.0D, 1.0D, 1.0D);
         EntityHitResult entityHitResult = ProjectileUtil.raycast(
                 entity,
@@ -500,13 +494,13 @@ class CaptureLogic {
                 vec3d3,
                 box,
                 (e) -> !e.isSpectator() && e.isCollidable(),
-                reachDistance * reachDistance
+                SchematicCaptureManager.reachDistance * SchematicCaptureManager.reachDistance
         );
 
         if (entityHitResult != null) {
             Vec3d hitPos = entityHitResult.getPos();
             double distance = cameraPos.squaredDistanceTo(hitPos);
-            if (distance < (target != null ? cameraPos.squaredDistanceTo(target.getPos()) : reachDistance * reachDistance)) {
+            if (distance < (target != null ? cameraPos.squaredDistanceTo(target.getPos()) : SchematicCaptureManager.reachDistance * SchematicCaptureManager.reachDistance)) {
                 target = entityHitResult;
             }
         }
